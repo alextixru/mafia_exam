@@ -7,7 +7,6 @@ import {
   Client,
   ComponentType,
   DiscordAPIError,
-  EmbedBuilder,
   Events,
   GatewayIntentBits,
   MessageFlags,
@@ -21,7 +20,6 @@ import {
   TextInputStyle,
   type APIActionRowComponent,
   type APIComponentInMessageActionRow,
-  type APIEmbed,
   type APIMessageTopLevelComponent,
   type ButtonInteraction,
   type Interaction,
@@ -107,21 +105,58 @@ const parseId = (raw: string): Parsed | null => {
 };
 
 // ============================================================================
-//  Renderers
+//  V2 helpers
 // ============================================================================
 
-interface RenderedMessage {
-  readonly embeds: APIEmbed[];
-  readonly components: APIActionRowComponent<APIComponentInMessageActionRow>[];
-}
-
-const truncate = (s: string, max: number): string =>
-  s.length <= max ? s : s.slice(0, max - 1) + "…";
-
-interface MainMessagePayload {
+interface V2Payload {
   readonly flags: number;
   readonly components: APIMessageTopLevelComponent[];
 }
+
+/**
+ * Собирает payload в формате Components V2.
+ * При ephemeral=true добавляет флаг Ephemeral поверх IsComponentsV2.
+ *
+ * Внимание: при IsComponentsV2 нельзя слать `content` или `embeds` —
+ * любой текст идёт через TextDisplay внутри components.
+ */
+const v2 = (
+  components: APIMessageTopLevelComponent[],
+  ephemeral = false,
+): V2Payload => ({
+  flags: ephemeral
+    ? MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    : MessageFlags.IsComponentsV2,
+  components,
+});
+
+const text = (content: string): APIMessageTopLevelComponent =>
+  ({ type: ComponentType.TextDisplay, content }) as APIMessageTopLevelComponent;
+
+const separator = (
+  spacing: 1 | 2 = 1,
+  divider = true,
+): APIMessageTopLevelComponent =>
+  ({
+    type: ComponentType.Separator,
+    divider,
+    spacing,
+  }) as APIMessageTopLevelComponent;
+
+const container = (
+  components: APIMessageTopLevelComponent[],
+): APIMessageTopLevelComponent =>
+  ({
+    type: ComponentType.Container,
+    components,
+  }) as APIMessageTopLevelComponent;
+
+// ============================================================================
+//  Renderers
+// ============================================================================
+
+const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : s.slice(0, max - 1) + "…";
 
 function buildSelectRow(
   polls: readonly Poll[],
@@ -158,18 +193,19 @@ function buildSelectRow(
 function renderMainMessage(
   polls: readonly Poll[],
   headerComponents: readonly APIMessageTopLevelComponent[] | null,
-): MainMessagePayload {
+): V2Payload {
   const selectRow = buildSelectRow(polls);
 
   const baseHeader: readonly APIMessageTopLevelComponent[] =
     headerComponents && headerComponents.length > 0
       ? headerComponents
       : [
-          {
-            type: ComponentType.TextDisplay,
-            content:
-              "**Опросы**\n\nЗагрузите шапку через `/exam set-header url:<discohook-url>`.",
-          } as APIMessageTopLevelComponent,
+          container([
+            text("## Опросы"),
+            text(
+              "Загрузите шапку через `/exam set-header url:<discohook-url>`.",
+            ),
+          ]),
         ];
 
   return {
@@ -200,34 +236,44 @@ function mergeHeaderWithSelect(
   }
 
   const result = [...header];
-  const container = result[lastContainerIdx] as APIMessageTopLevelComponent & {
+  const lastContainer = result[lastContainerIdx] as APIMessageTopLevelComponent & {
     type: ComponentType.Container;
     components: APIMessageTopLevelComponent[];
   };
   result[lastContainerIdx] = {
-    ...container,
-    components: [...container.components, selectRow],
+    ...lastContainer,
+    components: [...lastContainer.components, selectRow],
   } as APIMessageTopLevelComponent;
   return result;
 }
 
-function renderQuestion(view: QuestionView): RenderedMessage {
-  const lines = [
-    `**Вопрос ${view.cursor + 1}/${view.total}**`,
-    "",
-    view.question.text,
+/**
+ * Эфемерное «toast»-сообщение в V2 (Container с одним TextDisplay).
+ * Используется для финальных сообщений и replies на ошибки —
+ * чтобы можно было делать i.update() поверх V2-эфемерки без ломания типа.
+ */
+function renderEphemeralNotice(content: string): V2Payload {
+  return v2([container([text(content)])], true);
+}
+
+function renderQuestion(view: QuestionView): V2Payload {
+  const body: APIMessageTopLevelComponent[] = [
+    text(`### ${truncate(view.poll.title, 200)}`),
+    text(`**Вопрос ${view.cursor + 1}/${view.total}**`),
+    text(view.question.text),
   ];
   const currentLine = formatCurrentAnswer(view);
-  if (currentLine) lines.push("", currentLine);
+  if (currentLine) {
+    body.push(separator(1));
+    body.push(text(currentLine));
+  }
+  body.push(separator(1));
 
-  const embed = new EmbedBuilder()
-    .setTitle(view.poll.title)
-    .setDescription(lines.join("\n"));
+  for (const row of buildQuestionComponents(view)) {
+    body.push(row as unknown as APIMessageTopLevelComponent);
+  }
 
-  return {
-    embeds: [embed.toJSON()],
-    components: buildQuestionComponents(view),
-  };
+  return v2([container(body)], true);
 }
 
 function formatCurrentAnswer(view: QuestionView): string | null {
@@ -366,18 +412,23 @@ function renderAnswerModal(pollId: PollId, question: FreeQuestion): ModalBuilder
     );
 }
 
-function renderReport(report: SurveyReport): APIEmbed {
+function renderReport(report: SurveyReport): V2Payload {
   const { poll, session } = report;
-  const fields = poll.questions.map((q) => ({
-    name: truncate(q.text, 256),
-    value: truncate(formatAnswer(q, session.answers[q.id] ?? null), 1024),
-  }));
-  return new EmbedBuilder()
-    .setTitle(`Опрос: ${poll.title}`)
-    .setDescription(`Респондент: <@${session.userId}>`)
-    .addFields(fields)
-    .setTimestamp(report.completedAt)
-    .toJSON();
+
+  const body: APIMessageTopLevelComponent[] = [
+    text(`## Опрос: ${truncate(poll.title, 200)}`),
+    text(`Респондент: <@${session.userId}>`),
+  ];
+
+  for (let i = 0; i < poll.questions.length; i++) {
+    const q = poll.questions[i]!;
+    const a = session.answers[q.id] ?? null;
+    body.push(separator(1));
+    body.push(text(`**${i + 1}. ${truncate(q.text, 800)}**`));
+    body.push(text(truncate(formatAnswer(q, a), 1500)));
+  }
+
+  return v2([container(body)]);
 }
 
 function formatAnswer(question: Question, answer: Answer | null): string {
@@ -417,7 +468,7 @@ export class DiscordReportSink implements ReportSink {
       throw new Error(
         `report channel ${this.channelId} is not a sendable text channel`,
       );
-    await channel.send({ embeds: [renderReport(report)] });
+    await channel.send(renderReport(report));
   }
 }
 
@@ -435,7 +486,7 @@ export interface MainMessageDeps {
 export async function buildMainPayload(
   deps: Pick<MainMessageDeps, "headers">,
   polls: readonly Poll[],
-): Promise<MainMessagePayload> {
+): Promise<V2Payload> {
   const header = await deps.headers.get();
   return renderMainMessage(
     polls,
@@ -541,16 +592,10 @@ async function routeSelect(
 
     const r = await uc.startSurvey({ userId: i.user.id, pollId });
     if (!r.ok) {
-      await i.followUp({
-        content: "Опрос не найден.",
-        flags: MessageFlags.Ephemeral,
-      });
+      await i.followUp(renderEphemeralNotice("⚠ Опрос не найден."));
       return;
     }
-    await i.followUp({
-      ...renderQuestion(r.value),
-      flags: MessageFlags.Ephemeral,
-    });
+    await i.followUp(renderQuestion(r.value));
     return;
   }
 
@@ -575,10 +620,7 @@ async function routeSelect(
       answer,
     });
     if (!r.ok) {
-      await i.reply({
-        content: submitErrorMessage(r.error),
-        flags: MessageFlags.Ephemeral,
-      });
+      await i.reply(renderEphemeralNotice(submitErrorMessage(r.error)));
       return;
     }
     await i.update(renderQuestion(r.value));
@@ -603,10 +645,11 @@ async function routeButton(
         (q): q is FreeQuestion => q.id === questionId && q.kind === "free",
       );
       if (!question) {
-        await i.reply({
-          content: "Этот вопрос не поддерживает свободный ответ.",
-          flags: MessageFlags.Ephemeral,
-        });
+        await i.reply(
+          renderEphemeralNotice(
+            "⚠ Этот вопрос не поддерживает свободный ответ.",
+          ),
+        );
         return;
       }
       await i.showModal(renderAnswerModal(pollId, question));
@@ -615,10 +658,7 @@ async function routeButton(
     case "nav-back": {
       const r = await uc.goBack({ userId: i.user.id, pollId });
       if (!r.ok) {
-        await i.reply({
-          content: navErrorMessage(r.error),
-          flags: MessageFlags.Ephemeral,
-        });
+        await i.reply(renderEphemeralNotice(navErrorMessage(r.error)));
         return;
       }
       await i.update(renderQuestion(r.value));
@@ -627,10 +667,7 @@ async function routeButton(
     case "nav-next": {
       const r = await uc.goNext({ userId: i.user.id, pollId });
       if (!r.ok) {
-        await i.reply({
-          content: navErrorMessage(r.error),
-          flags: MessageFlags.Ephemeral,
-        });
+        await i.reply(renderEphemeralNotice(navErrorMessage(r.error)));
         return;
       }
       await i.update(renderQuestion(r.value));
@@ -639,30 +676,21 @@ async function routeButton(
     case "nav-finish": {
       const r = await uc.finishSurvey({ userId: i.user.id, pollId });
       if (!r.ok) {
-        await i.update({
-          content:
+        await i.update(
+          renderEphemeralNotice(
             r.error.kind === "incomplete"
-              ? `Остались без ответа вопросов: ${r.error.missingCount}.`
-              : "Не удалось завершить опрос.",
-          embeds: [],
-          components: [],
-        });
+              ? `⚠ Остались без ответа вопросов: ${r.error.missingCount}.`
+              : "⚠ Не удалось завершить опрос.",
+          ),
+        );
         return;
       }
-      await i.update({
-        content: "Спасибо! Ваши ответы отправлены.",
-        embeds: [],
-        components: [],
-      });
+      await i.update(renderEphemeralNotice("✓ Спасибо! Ваши ответы отправлены."));
       return;
     }
     case "nav-cancel": {
       await uc.cancelSurvey({ userId: i.user.id, pollId });
-      await i.update({
-        content: "Опрос отменён. Прогресс удалён.",
-        embeds: [],
-        components: [],
-      });
+      await i.update(renderEphemeralNotice("Опрос отменён. Прогресс удалён."));
       return;
     }
   }
@@ -678,26 +706,19 @@ async function routeModal(
   const [pollId, questionId] = parsed.args;
   if (!pollId || !questionId) return;
 
-  const text = i.fields.getTextInputValue(MODAL_INPUT);
+  const answerText = i.fields.getTextInputValue(MODAL_INPUT);
   const r = await uc.submitAnswer({
     userId: i.user.id,
     pollId,
     questionId,
-    answer: { kind: "free", text },
+    answer: { kind: "free", text: answerText },
   });
   if (!r.ok) {
-    await i.reply({
-      content: submitErrorMessage(r.error),
-      flags: MessageFlags.Ephemeral,
-    });
+    await i.reply(renderEphemeralNotice(submitErrorMessage(r.error)));
     return;
   }
   if (i.isFromMessage()) await i.update(renderQuestion(r.value));
-  else
-    await i.reply({
-      ...renderQuestion(r.value),
-      flags: MessageFlags.Ephemeral,
-    });
+  else await i.reply(renderQuestion(r.value));
 }
 
 const submitErrorMessage = (e: {
@@ -705,31 +726,30 @@ const submitErrorMessage = (e: {
   message?: string;
 }): string => {
   if (e.kind === "validation" && e.message)
-    return `Ответ некорректен: ${e.message}`;
+    return `⚠ Ответ некорректен: ${e.message}`;
   if (e.kind === "session-not-found")
-    return "Сессия не найдена. Откройте опрос из главного меню заново.";
+    return "⚠ Сессия не найдена. Откройте опрос из главного меню заново.";
   if (e.kind === "question-mismatch")
-    return "Этот вопрос больше неактивен. Откройте опрос из главного меню заново.";
-  return "Не удалось сохранить ответ.";
+    return "⚠ Этот вопрос больше неактивен. Откройте опрос из главного меню заново.";
+  return "⚠ Не удалось сохранить ответ.";
 };
 
 const navErrorMessage = (e: string): string => {
   if (e === "session-not-found")
-    return "Сессия не найдена. Откройте опрос из главного меню заново.";
-  if (e === "current-not-answered") return "Сначала ответьте на текущий вопрос.";
-  if (e === "already-first") return "Это первый вопрос.";
-  if (e === "already-last") return "Это последний вопрос.";
-  return "Не удалось перейти.";
+    return "⚠ Сессия не найдена. Откройте опрос из главного меню заново.";
+  if (e === "current-not-answered") return "⚠ Сначала ответьте на текущий вопрос.";
+  if (e === "already-first") return "⚠ Это первый вопрос.";
+  if (e === "already-last") return "⚠ Это последний вопрос.";
+  return "⚠ Не удалось перейти.";
 };
 
 async function safeReplyError(interaction: Interaction): Promise<void> {
   if (!interaction.isRepliable()) return;
   try {
     if (interaction.replied || interaction.deferred) return;
-    await interaction.reply({
-      content: "Что-то пошло не так. Попробуйте позже.",
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.reply(
+      renderEphemeralNotice("⚠ Что-то пошло не так. Попробуйте позже."),
+    );
   } catch {
     // swallow
   }
