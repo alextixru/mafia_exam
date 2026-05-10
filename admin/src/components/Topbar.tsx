@@ -66,7 +66,7 @@ function UserBadge({
 }) {
   const avatarUrl = user.avatar
     ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=32`
-    : `https://cdn.discordapp.com/embed/avatars/${(BigInt(user.id) >> 22n) % 6n}.png`;
+    : defaultDiscordAvatar(user.id);
 
   return (
     <div className="flex items-center gap-2 pl-3 border-l border-dc-border">
@@ -88,6 +88,16 @@ function UserBadge({
       </button>
     </div>
   );
+}
+
+function defaultDiscordAvatar(userId: string): string {
+  // Для не-снежинок (например, "pin-admin") fallback на нулевой аватар.
+  try {
+    const idx = Number((BigInt(userId) >> 22n) % 6n);
+    return `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+  } catch {
+    return "https://cdn.discordapp.com/embed/avatars/0.png";
+  }
 }
 
 function Status({ dirty, saved }: { dirty: boolean; saved: boolean }) {
