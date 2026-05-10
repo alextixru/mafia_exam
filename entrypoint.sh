@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+cd /app
+
 mkdir -p "$POLLS_DIR" "$DATA_DIR"
 
 # Если volume пустой при первом старте — заполняем дефолтами,

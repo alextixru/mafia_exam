@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 export interface AppConfig {
   readonly discordToken: string;
   readonly applicationId: string;
@@ -25,6 +27,7 @@ const requireEnv = (name: string): string => {
 
 export const loadConfig = (): AppConfig => {
   const isProduction = process.env.NODE_ENV === "production";
+  const rawStatic = process.env.STATIC_DIR?.trim();
   return {
     discordToken: requireEnv("DISCORD_TOKEN"),
     applicationId: requireEnv("APPLICATION_ID"),
@@ -33,15 +36,14 @@ export const loadConfig = (): AppConfig => {
     guildId: requireEnv("GUILD_ID"),
     mainChannelId: requireEnv("MAIN_CHANNEL_ID"),
     reportChannelId: requireEnv("REPORT_CHANNEL_ID"),
-    pollsDir: process.env.POLLS_DIR ?? "polls",
-    dataDir: process.env.DATA_DIR ?? "data",
+    pollsDir: resolve(process.env.POLLS_DIR ?? "polls"),
+    dataDir: resolve(process.env.DATA_DIR ?? "data"),
     httpPort: Number(process.env.HTTP_PORT ?? 3000),
     appUrl: process.env.APP_URL ?? "http://localhost:5173",
     // ?? пропускает только null/undefined — пустую строку считаем тоже отсутствием.
-    staticDir:
-      process.env.STATIC_DIR && process.env.STATIC_DIR.length > 0
-        ? process.env.STATIC_DIR
-        : null,
+    // resolve превращает относительный путь в абсолютный (от process.cwd),
+    // чтобы Bun.file и path.startsWith работали стабильно.
+    staticDir: rawStatic && rawStatic.length > 0 ? resolve(rawStatic) : null,
     isProduction,
   };
 };
