@@ -17,6 +17,8 @@ export interface AppConfig {
   readonly staticDir: string | null;
   /** "production" / "development" — влияет на cookie Secure-флаг. */
   readonly isProduction: boolean;
+  /** Опциональный PIN для альтернативного входа в админку. */
+  readonly adminPin: string | null;
 }
 
 const requireEnv = (name: string): string => {
@@ -45,5 +47,6 @@ export const loadConfig = (): AppConfig => {
     // чтобы Bun.file и path.startsWith работали стабильно.
     staticDir: rawStatic && rawStatic.length > 0 ? resolve(rawStatic) : null,
     isProduction,
+    adminPin: process.env.ADMIN_PIN?.trim() || null,
   };
 };

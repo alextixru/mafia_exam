@@ -39,6 +39,9 @@ export function startHttpServer(deps: HttpDeps) {
       if (pathname === "/api/auth/callback")
         return auth.handleCallback(req);
       if (pathname === "/api/auth/me") return auth.me(req);
+      if (pathname === "/api/auth/options") return auth.options();
+      if (pathname === "/api/auth/pin" && req.method === "POST")
+        return auth.pinLogin(req);
       if (pathname === "/api/auth/logout" && req.method === "POST")
         return auth.logout();
 

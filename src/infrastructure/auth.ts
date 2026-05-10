@@ -3,6 +3,35 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AppConfig } from "./config.ts";
 
 // ============================================================================
+//  Rate limit (in-memory, на IP) — простой sliding-window для PIN-эндпойнта.
+// ============================================================================
+
+const PIN_RATE_WINDOW_MS = 5 * 60 * 1000;
+const PIN_RATE_MAX_ATTEMPTS = 5;
+
+const pinAttempts = new Map<string, number[]>();
+
+function tryConsumePinAttempt(ip: string): boolean {
+  const now = Date.now();
+  const recent = (pinAttempts.get(ip) ?? []).filter(
+    (t) => now - t < PIN_RATE_WINDOW_MS,
+  );
+  if (recent.length >= PIN_RATE_MAX_ATTEMPTS) {
+    pinAttempts.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  pinAttempts.set(ip, recent);
+  return true;
+}
+
+function getClientIp(req: Request): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0]!.trim();
+  return req.headers.get("x-real-ip") ?? "unknown";
+}
+
+// ============================================================================
 //  JWT (HS256, без зависимостей)
 // ============================================================================
 
@@ -213,6 +242,51 @@ export class AuthService {
         id: session.sub,
         username: session.username,
         avatar: session.avatar,
+      },
+    });
+  }
+
+  /** GET /api/auth/options — что показывать на странице логина. */
+  options(): Response {
+    return Response.json({
+      pin: !!this.cfg.adminPin,
+      discord: true,
+    });
+  }
+
+  /** POST /api/auth/pin — { pin: string } */
+  async pinLogin(req: Request): Promise<Response> {
+    if (!this.cfg.adminPin) return text(404, "pin login disabled");
+
+    const ip = getClientIp(req);
+    if (!tryConsumePinAttempt(ip)) return text(429, "too many attempts");
+
+    let body: { pin?: unknown };
+    try {
+      body = (await req.json()) as { pin?: unknown };
+    } catch {
+      return text(400, "invalid json");
+    }
+    const provided = typeof body.pin === "string" ? body.pin : "";
+
+    const a = Buffer.from(provided);
+    const b = Buffer.from(this.cfg.adminPin);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return text(401, "invalid pin");
+    }
+
+    const session = signSession(this.cfg.sessionSecret, {
+      sub: "pin-admin",
+      username: "PIN admin",
+      avatar: null,
+    });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Set-Cookie": buildCookie(SESSION_COOKIE, session, {
+          maxAge: SESSION_TTL_S,
+          secure: this.cfg.isProduction,
+        }),
       },
     });
   }
