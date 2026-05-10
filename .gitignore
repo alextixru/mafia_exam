@@ -12,3 +12,6 @@ data/
 
 # TS build artifacts
 *.tsbuildinfo
+
+# рантайм-опросы созданные через админку (id с автогенерируемым префиксом poll_)
+polls/poll_*.json
