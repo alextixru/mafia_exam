@@ -85,6 +85,7 @@ export function startHttpServer(deps: HttpDeps) {
       if (config.staticDir) {
         const staticRes = await serveStatic(config.staticDir, pathname);
         if (staticRes) return staticRes;
+        console.warn(`static 404: ${req.method} ${pathname}`);
       }
 
       return new Response("Not Found", { status: 404 });
