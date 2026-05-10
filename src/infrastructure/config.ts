@@ -37,7 +37,11 @@ export const loadConfig = (): AppConfig => {
     dataDir: process.env.DATA_DIR ?? "data",
     httpPort: Number(process.env.HTTP_PORT ?? 3000),
     appUrl: process.env.APP_URL ?? "http://localhost:5173",
-    staticDir: process.env.STATIC_DIR ?? null,
+    // ?? пропускает только null/undefined — пустую строку считаем тоже отсутствием.
+    staticDir:
+      process.env.STATIC_DIR && process.env.STATIC_DIR.length > 0
+        ? process.env.STATIC_DIR
+        : null,
     isProduction,
   };
 };

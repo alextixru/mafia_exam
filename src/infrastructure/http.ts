@@ -19,6 +19,14 @@ export function startHttpServer(deps: HttpDeps) {
   const { config, useCases, refreshMainMessage } = deps;
   const auth = new AuthService(config);
 
+  if (config.staticDir) {
+    console.log(`Раздача SPA из: ${config.staticDir}`);
+  } else {
+    console.warn(
+      "STATIC_DIR не задан — фронт не раздаётся. Запросы / вернут 404.",
+    );
+  }
+
   return Bun.serve({
     port: config.httpPort,
     async fetch(req) {
@@ -96,31 +104,46 @@ async function safeRefresh(
 }
 
 /**
- * SPA-static: пытается отдать файл; если файла нет — отдаёт index.html.
- * Защищает от path traversal — нормализованный путь должен оставаться
- * внутри staticDir.
+ * SPA-static. Стратегия:
+ *   - "/" или "" → отдаём index.html;
+ *   - запрос с конкретным файлом (есть точка) → пробуем отдать файл, иначе 404;
+ *   - всё остальное (роуты SPA) → отдаём index.html (history fallback).
+ * Path traversal: запрещаем `..` после нормализации.
  */
 async function serveStatic(
   staticDir: string,
   pathname: string,
 ): Promise<Response | null> {
-  const safe = normalize(pathname).replace(/^([./\\])+/, "");
-  const candidate = join(staticDir, safe);
+  const safe = normalize(pathname).replace(/^[./\\]+/, "");
+  if (safe.split(sep).includes("..")) return null;
 
-  if (!candidate.startsWith(staticDir + sep) && candidate !== staticDir) {
+  const indexPath = join(staticDir, "index.html");
+
+  if (pathname === "/" || safe === "") {
+    return tryFile(indexPath);
+  }
+
+  const candidate = join(staticDir, safe);
+  // не выпускать из staticDir
+  if (
+    !candidate.startsWith(staticDir + sep) &&
+    candidate !== staticDir
+  ) {
     return null;
   }
 
-  const file = Bun.file(candidate);
-  if (await file.exists()) {
-    return new Response(file);
-  }
+  const direct = await tryFile(candidate);
+  if (direct) return direct;
 
-  // SPA-fallback: любой неизвестный путь без расширения → index.html
-  if (!pathname.includes(".") || pathname === "/") {
-    const index = Bun.file(join(staticDir, "index.html"));
-    if (await index.exists()) return new Response(index);
+  // SPA-fallback: путь без расширения = роут React-Router'а
+  if (!pathname.split("/").pop()?.includes(".")) {
+    return tryFile(indexPath);
   }
-
   return null;
+}
+
+async function tryFile(path: string): Promise<Response | null> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) return null;
+  return new Response(file);
 }
