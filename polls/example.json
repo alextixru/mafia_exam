@@ -1,0 +1,35 @@
+{
+  "id": "onboarding",
+  "title": "Знакомство",
+  "description": "Короткий опрос для новых участников",
+  "questions": [
+    {
+      "id": "name",
+      "type": "free",
+      "text": "Как тебя зовут (или ник)?"
+    },
+    {
+      "id": "role",
+      "type": "single",
+      "text": "Кем ты обычно играешь?",
+      "options": [
+        { "value": "player", "label": "Игроком" },
+        { "value": "leader", "label": "Ведущим" },
+        { "value": "watcher", "label": "Зрителем" }
+      ]
+    },
+    {
+      "id": "favorites",
+      "type": "multi",
+      "text": "Какие роли в мафии тебе нравятся?",
+      "options": [
+        { "value": "mafia", "label": "Мафия" },
+        { "value": "sheriff", "label": "Шериф" },
+        { "value": "doctor", "label": "Доктор" },
+        { "value": "civ", "label": "Мирный" }
+      ],
+      "min": 1,
+      "max": 3
+    }
+  ]
+}

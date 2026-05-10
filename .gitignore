@@ -1,0 +1,14 @@
+node_modules/
+admin/node_modules/
+admin/dist/
+data/
+.env
+.env.local
+.env.production
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# TS build artifacts
+*.tsbuildinfo

@@ -1,0 +1,37 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - HTTP_PORT=3000
+      - APP_URL=https://mafiads.dzen.team
+      - POLLS_DIR=/data/polls
+      - DATA_DIR=/data/state
+      - STATIC_DIR=/app/admin/dist
+    volumes:
+      - polls:/data/polls
+      - state:/data/state
+    expose:
+      - "3000"
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.mafiads.rule=Host(`mafiads.dzen.team`)"
+      - "traefik.http.routers.mafiads.entrypoints=websecure"
+      - "traefik.http.routers.mafiads.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mafiads.loadbalancer.server.port=3000"
+
+volumes:
+  polls:
+  state:
+
+networks:
+  dokploy-network:
+    external: true

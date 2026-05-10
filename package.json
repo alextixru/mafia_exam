@@ -1,0 +1,25 @@
+{
+  "name": "mafia-opros",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "concurrently -n bot,web -c blue,magenta \"bun --watch src/index.ts\" \"cd admin && bun run dev\"",
+    "dev:bot": "bun --watch src/index.ts",
+    "dev:web": "cd admin && bun run dev",
+    "build:web": "cd admin && bun run build",
+    "register": "bun run src/scripts/register-commands.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "arctic": "^3.7.0",
+    "discord.js": "^14.16.0"
+  }
+}
