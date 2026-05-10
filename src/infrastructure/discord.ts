@@ -304,96 +304,102 @@ function buildQuestionComponents(
 ): APIActionRowComponent<APIComponentInMessageActionRow>[] {
   const rows: APIActionRowComponent<APIComponentInMessageActionRow>[] = [];
 
-  switch (view.question.kind) {
-    case "free": {
-      const btn = new ButtonBuilder()
-        .setCustomId(Id.openModal(view.poll.id, view.question.id))
-        .setLabel(view.currentAnswer ? "Изменить ответ" : "Ответить")
-        .setStyle(ButtonStyle.Primary);
-      rows.push(
-        new ActionRowBuilder<ButtonBuilder>().addComponents(btn).toJSON(),
+  // Для single/multi сначала идёт row с select-меню (по API один select на row).
+  if (view.question.kind === "single") {
+    const current = (view.currentAnswer as SingleAnswer | null)?.value;
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(Id.singleSelect(view.poll.id, view.question.id))
+      .setPlaceholder(current ? "Изменить выбор" : "Выберите вариант")
+      .addOptions(
+        view.question.options.slice(0, 25).map((o) =>
+          new StringSelectMenuOptionBuilder()
+            .setValue(o.value)
+            .setLabel(truncate(o.label, 100))
+            .setDefault(o.value === current),
+        ),
       );
-      break;
-    }
-    case "single": {
-      const current = (view.currentAnswer as SingleAnswer | null)?.value;
-      const select = new StringSelectMenuBuilder()
-        .setCustomId(Id.singleSelect(view.poll.id, view.question.id))
-        .setPlaceholder(current ? "Изменить выбор" : "Выберите вариант")
-        .addOptions(
-          view.question.options.slice(0, 25).map((o) =>
-            new StringSelectMenuOptionBuilder()
-              .setValue(o.value)
-              .setLabel(truncate(o.label, 100))
-              .setDefault(o.value === current),
-          ),
-        );
-      rows.push(
-        new ActionRowBuilder<StringSelectMenuBuilder>()
-          .addComponents(select)
-          .toJSON(),
+    rows.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>()
+        .addComponents(select)
+        .toJSON(),
+    );
+  } else if (view.question.kind === "multi") {
+    const currentValues = new Set(
+      (view.currentAnswer as MultiAnswer | null)?.values ?? [],
+    );
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(Id.multiSelect(view.poll.id, view.question.id))
+      .setPlaceholder(
+        currentValues.size > 0 ? "Изменить выбор" : "Выберите варианты",
+      )
+      .setMinValues(view.question.min)
+      .setMaxValues(Math.min(view.question.max, view.question.options.length))
+      .addOptions(
+        view.question.options.slice(0, 25).map((o) =>
+          new StringSelectMenuOptionBuilder()
+            .setValue(o.value)
+            .setLabel(truncate(o.label, 100))
+            .setDefault(currentValues.has(o.value)),
+        ),
       );
-      break;
-    }
-    case "multi": {
-      const currentValues = new Set(
-        (view.currentAnswer as MultiAnswer | null)?.values ?? [],
-      );
-      const select = new StringSelectMenuBuilder()
-        .setCustomId(Id.multiSelect(view.poll.id, view.question.id))
-        .setPlaceholder(
-          currentValues.size > 0 ? "Изменить выбор" : "Выберите варианты",
-        )
-        .setMinValues(view.question.min)
-        .setMaxValues(Math.min(view.question.max, view.question.options.length))
-        .addOptions(
-          view.question.options.slice(0, 25).map((o) =>
-            new StringSelectMenuOptionBuilder()
-              .setValue(o.value)
-              .setLabel(truncate(o.label, 100))
-              .setDefault(currentValues.has(o.value)),
-          ),
-        );
-      rows.push(
-        new ActionRowBuilder<StringSelectMenuBuilder>()
-          .addComponents(select)
-          .toJSON(),
-      );
-      break;
-    }
+    rows.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>()
+        .addComponents(select)
+        .toJSON(),
+    );
   }
 
+  // Для free кнопка «Ответить» встраивается в навигационный row.
   rows.push(buildNavRow(view).toJSON());
   return rows;
 }
 
 function buildNavRow(view: QuestionView): ActionRowBuilder<ButtonBuilder> {
-  const back = new ButtonBuilder()
-    .setCustomId(Id.navBack(view.poll.id))
-    .setLabel("Назад")
-    .setStyle(ButtonStyle.Secondary)
-    .setDisabled(!view.canGoBack);
+  const buttons: ButtonBuilder[] = [];
 
-  const cancel = new ButtonBuilder()
-    .setCustomId(Id.navCancel(view.poll.id))
-    .setLabel("Отмена")
-    .setStyle(ButtonStyle.Secondary);
+  buttons.push(
+    new ButtonBuilder()
+      .setCustomId(Id.navBack(view.poll.id))
+      .setLabel("Назад")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!view.canGoBack),
+  );
 
-  if (view.isLast) {
-    const finish = new ButtonBuilder()
-      .setCustomId(Id.navFinish(view.poll.id))
-      .setLabel("Завершить")
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(view.currentAnswer === null);
-    return new ActionRowBuilder<ButtonBuilder>().addComponents(back, cancel, finish);
+  buttons.push(
+    new ButtonBuilder()
+      .setCustomId(Id.navCancel(view.poll.id))
+      .setLabel("Отмена")
+      .setStyle(ButtonStyle.Secondary),
+  );
+
+  if (view.question.kind === "free") {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(Id.openModal(view.poll.id, view.question.id))
+        .setLabel(view.currentAnswer ? "Изменить ответ" : "Ответить")
+        .setStyle(ButtonStyle.Primary),
+    );
   }
 
-  const next = new ButtonBuilder()
-    .setCustomId(Id.navNext(view.poll.id))
-    .setLabel("Далее")
-    .setStyle(ButtonStyle.Primary)
-    .setDisabled(view.currentAnswer === null);
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(back, cancel, next);
+  if (view.isLast) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(Id.navFinish(view.poll.id))
+        .setLabel("Завершить")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(view.currentAnswer === null),
+    );
+  } else {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(Id.navNext(view.poll.id))
+        .setLabel("Далее")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(view.currentAnswer === null),
+    );
+  }
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 }
 
 function renderAnswerModal(pollId: PollId, question: FreeQuestion): ModalBuilder {
