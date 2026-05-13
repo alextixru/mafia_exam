@@ -3,8 +3,8 @@ import { loadConfig } from "./infrastructure/config.ts";
 import {
   DiscordReportSink,
   createDiscordClient,
-  ensureMainMessage,
   registerInteractionRouter,
+  syncAllMainMessages,
   waitReady,
 } from "./infrastructure/discord.ts";
 import { startHttpServer } from "./infrastructure/http.ts";
@@ -28,14 +28,13 @@ async function main(): Promise<void> {
   const ready = await waitReady(client);
   console.log(`Бот запущен: ${ready.user.tag}`);
 
-  const reports = new DiscordReportSink(ready, config.reportChannelId);
+  const reports = new DiscordReportSink(ready);
   const useCases = createUseCases({ polls, sessions, reports });
 
   const mainMessageDeps = {
     client: ready,
     store: stateStore,
     headers: headerStore,
-    channelId: config.mainChannelId,
   };
 
   registerInteractionRouter(ready, {
@@ -44,14 +43,15 @@ async function main(): Promise<void> {
     examDeps: { client: ready, mainMessageDeps, useCases },
   });
 
-  await ensureMainMessage(mainMessageDeps, await polls.list());
-  console.log("Главное сообщение готово.");
+  await syncAllMainMessages(mainMessageDeps, await polls.list());
+  console.log("Главные сообщения синхронизированы.");
 
   const server = startHttpServer({
     config,
     useCases,
+    client: ready,
     refreshMainMessage: async () => {
-      await ensureMainMessage(mainMessageDeps, await polls.list());
+      await syncAllMainMessages(mainMessageDeps, await polls.list());
     },
   });
   console.log(`HTTP API на http://localhost:${server.port}`);

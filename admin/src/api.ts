@@ -61,6 +61,19 @@ export async function logout(): Promise<void> {
 
 export const loginUrl = "/api/auth/login";
 
+export interface DiscordChannel {
+  id: string;
+  name: string;
+  parentName: string | null;
+  position: number;
+}
+
+export async function fetchChannels(): Promise<DiscordChannel[]> {
+  const res = await fetch("/api/discord/channels");
+  if (!res.ok) throw new Error(`GET /api/discord/channels: ${res.status}`);
+  return (await res.json()) as DiscordChannel[];
+}
+
 export interface AuthOptions {
   pin: boolean;
   discord: boolean;

@@ -1,11 +1,14 @@
+import type { Client } from "discord.js";
 import { join, normalize, sep } from "node:path";
 import type { UseCases } from "../application.ts";
 import { AuthService } from "./auth.ts";
 import type { AppConfig } from "./config.ts";
+import { listGuildChannels } from "./discord.ts";
 
 export interface HttpDeps {
   readonly config: AppConfig;
   readonly useCases: UseCases;
+  readonly client: Client<true>;
   readonly refreshMainMessage: () => Promise<void>;
 }
 
@@ -16,7 +19,7 @@ const error = (status: number, message: string): Response =>
   json({ error: message }, { status });
 
 export function startHttpServer(deps: HttpDeps) {
-  const { config, useCases, refreshMainMessage } = deps;
+  const { config, useCases, client, refreshMainMessage } = deps;
   const auth = new AuthService(config);
 
   if (config.staticDir) {
@@ -57,6 +60,16 @@ export function startHttpServer(deps: HttpDeps) {
 
         if (req.method === "GET" && pathname === "/api/polls") {
           return json(await useCases.listPolls());
+        }
+
+        if (req.method === "GET" && pathname === "/api/discord/channels") {
+          try {
+            const channels = await listGuildChannels(client, config.guildId);
+            return json(channels);
+          } catch (e) {
+            console.error("listGuildChannels failed:", e);
+            return error(502, "failed to fetch channels");
+          }
         }
 
         if (req.method === "POST" && pathname === "/api/polls") {

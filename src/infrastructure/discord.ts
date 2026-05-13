@@ -403,17 +403,54 @@ function formatAnswer(question: Question, answer: Answer | null): string {
 //  ReportSink
 // ============================================================================
 
+export interface ChannelOption {
+  readonly id: string;
+  readonly name: string;
+  readonly parentName: string | null;
+  readonly position: number;
+}
+
+/**
+ * Текстовые каналы гильдии, отсортированные так же, как в Discord-клиенте.
+ * Используется фронтом для дропдаунов «канал публикации» / «канал отчёта».
+ */
+export async function listGuildChannels(
+  client: Client<true>,
+  guildId: string,
+): Promise<ChannelOption[]> {
+  const guild = await client.guilds.fetch(guildId);
+  const channels = await guild.channels.fetch();
+
+  const out: ChannelOption[] = [];
+  for (const ch of channels.values()) {
+    if (!ch) continue;
+    // только обычные text-каналы
+    if (
+      ch.type !== ChannelType.GuildText &&
+      ch.type !== ChannelType.GuildAnnouncement
+    ) {
+      continue;
+    }
+    out.push({
+      id: ch.id,
+      name: ch.name,
+      parentName: ch.parent?.name ?? null,
+      position: ch.position,
+    });
+  }
+  out.sort((a, b) => a.position - b.position);
+  return out;
+}
+
 export class DiscordReportSink implements ReportSink {
-  constructor(
-    private readonly client: Client<true>,
-    private readonly channelId: string,
-  ) {}
+  constructor(private readonly client: Client<true>) {}
 
   async send(report: SurveyReport): Promise<void> {
-    const channel = await this.client.channels.fetch(this.channelId);
+    const channelId = report.poll.reportChannelId;
+    const channel = await this.client.channels.fetch(channelId);
     if (!isSendable(channel))
       throw new Error(
-        `report channel ${this.channelId} is not a sendable text channel`,
+        `report channel ${channelId} is not a sendable text channel`,
       );
     await channel.send({
       ...renderReport(report),
@@ -436,10 +473,9 @@ export interface MainMessageDeps {
   readonly client: Client<true>;
   readonly store: MainMessageStore;
   readonly headers: HeaderStore;
-  readonly channelId: string;
 }
 
-export async function buildMainPayload(
+async function buildMainPayload(
   deps: Pick<MainMessageDeps, "headers">,
   polls: readonly Poll[],
 ): Promise<V2Payload> {
@@ -450,30 +486,88 @@ export async function buildMainPayload(
   );
 }
 
-export async function ensureMainMessage(
+/**
+ * Синхронизирует главные сообщения во ВСЕХ каналах:
+ *
+ * - Для каждого channelId, в котором есть хотя бы один опрос —
+ *   создаёт/обновляет главное сообщение со списком опросов этого канала.
+ * - Для каналов, которые есть в state, но опросов больше нет —
+ *   удаляет главное сообщение и стирает запись из state.
+ *
+ * Вызывается при старте бота, после save/delete опроса и из /exam reload.
+ */
+export async function syncAllMainMessages(
   deps: MainMessageDeps,
   polls: readonly Poll[],
 ): Promise<void> {
-  const channel = await deps.client.channels.fetch(deps.channelId);
-  if (!isSendable(channel))
-    throw new Error(
-      `channel ${deps.channelId} is not a sendable text channel`,
+  const byChannel = new Map<string, Poll[]>();
+  for (const p of polls) {
+    const arr = byChannel.get(p.channelId) ?? [];
+    arr.push(p);
+    byChannel.set(p.channelId, arr);
+  }
+
+  const known = await deps.store.get();
+
+  // Каналы, в которых опросов больше нет — убираем главное сообщение.
+  for (const channelId of Object.keys(known)) {
+    if (byChannel.has(channelId)) continue;
+    await tryDeleteMainMessage(deps, channelId, known[channelId]!);
+    await deps.store.remove(channelId);
+  }
+
+  // Активные каналы — апдейтим/создаём сообщение.
+  for (const [channelId, channelPolls] of byChannel) {
+    await upsertMainMessage(deps, channelId, channelPolls, known[channelId]);
+  }
+}
+
+async function upsertMainMessage(
+  deps: MainMessageDeps,
+  channelId: string,
+  channelPolls: readonly Poll[],
+  existingMessageId: string | undefined,
+): Promise<void> {
+  const channel = await deps.client.channels.fetch(channelId);
+  if (!isSendable(channel)) {
+    console.error(
+      `channel ${channelId} is not a sendable text channel — skipping`,
     );
+    return;
+  }
+  const payload = await buildMainPayload(deps, channelPolls);
 
-  const payload = await buildMainPayload(deps, polls);
-
-  const ref = await deps.store.get();
-  if (ref && ref.channelId === deps.channelId) {
+  if (existingMessageId) {
     try {
-      const existing = await channel.messages.fetch(ref.messageId);
+      const existing = await channel.messages.fetch(existingMessageId);
       await existing.edit(payload);
       return;
     } catch (e) {
       if (!(e instanceof DiscordAPIError && e.code === 10008)) throw e;
+      // Unknown Message — пересоздаём ниже.
     }
   }
   const sent = await channel.send(payload);
-  await deps.store.set({ channelId: deps.channelId, messageId: sent.id });
+  await deps.store.set(channelId, sent.id);
+}
+
+async function tryDeleteMainMessage(
+  deps: MainMessageDeps,
+  channelId: string,
+  messageId: string,
+): Promise<void> {
+  try {
+    const channel = await deps.client.channels.fetch(channelId);
+    if (!isSendable(channel)) return;
+    const msg = await channel.messages.fetch(messageId);
+    await msg.delete();
+  } catch (e) {
+    if (e instanceof DiscordAPIError && e.code === 10008) return;
+    console.error(
+      `failed to delete main message ${messageId} in ${channelId}:`,
+      e,
+    );
+  }
 }
 
 // ============================================================================
@@ -700,7 +794,7 @@ async function handleExamReload(
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   try {
     const polls = await deps.useCases.listPolls();
-    await ensureMainMessage(deps.mainMessageDeps, polls);
+    await syncAllMainMessages(deps.mainMessageDeps, polls);
     await interaction.editReply("Главное сообщение обновлено.");
   } catch (err) {
     await interaction.editReply(`Ошибка: ${(err as Error).message}`);
@@ -722,7 +816,7 @@ async function handleExamSetHeader(
       updatedBy: interaction.user.id,
     });
     const polls = await deps.useCases.listPolls();
-    await ensureMainMessage(deps.mainMessageDeps, polls);
+    await syncAllMainMessages(deps.mainMessageDeps, polls);
     await interaction.editReply(
       `Шапка обновлена (${parsed.components.length} компонент(ов)).`,
     );

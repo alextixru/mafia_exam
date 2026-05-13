@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type {
   HeaderData,
   HeaderStore,
-  MainMessageRef,
+  MainMessageMap,
   MainMessageStore,
   PollRepository,
   SessionRepository,
@@ -164,12 +164,13 @@ export class JsonSessionRepository implements SessionRepository {
 // ----------------------------------------------------------------------------
 
 interface StateFile {
-  readonly version: 1;
-  readonly mainMessage: MainMessageRef | null;
+  readonly version: 2;
+  /** channelId -> messageId главного embed-сообщения. */
+  readonly mainMessages: Record<string, string>;
 }
 
 export class JsonStateStore implements MainMessageStore {
-  private state: StateFile = { version: 1, mainMessage: null };
+  private state: StateFile = { version: 2, mainMessages: {} };
 
   private constructor(private readonly filePath: string) {}
 
@@ -178,19 +179,32 @@ export class JsonStateStore implements MainMessageStore {
     const store = new JsonStateStore(filePath);
     try {
       const parsed = JSON.parse(await readFile(filePath, "utf8")) as StateFile;
-      if (parsed.version === 1) store.state = parsed;
+      if (parsed.version === 2 && parsed.mainMessages) {
+        store.state = parsed;
+      }
     } catch (e) {
       if (!isENOENT(e)) throw e;
     }
     return store;
   }
 
-  async get(): Promise<MainMessageRef | null> {
-    return this.state.mainMessage;
+  async get(): Promise<MainMessageMap> {
+    return this.state.mainMessages;
   }
 
-  async set(ref: MainMessageRef): Promise<void> {
-    this.state = { version: 1, mainMessage: ref };
+  async set(channelId: string, messageId: string): Promise<void> {
+    this.state = {
+      version: 2,
+      mainMessages: { ...this.state.mainMessages, [channelId]: messageId },
+    };
+    await atomicWriteJson(this.filePath, this.state);
+  }
+
+  async remove(channelId: string): Promise<void> {
+    if (!(channelId in this.state.mainMessages)) return;
+    const next = { ...this.state.mainMessages };
+    delete next[channelId];
+    this.state = { version: 2, mainMessages: next };
     await atomicWriteJson(this.filePath, this.state);
   }
 }

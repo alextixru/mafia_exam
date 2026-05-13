@@ -6,8 +6,6 @@ export interface AppConfig {
   readonly clientSecret: string;
   readonly sessionSecret: string;
   readonly guildId: string;
-  readonly mainChannelId: string;
-  readonly reportChannelId: string;
   readonly pollsDir: string;
   readonly dataDir: string;
   readonly httpPort: number;
@@ -36,8 +34,6 @@ export const loadConfig = (): AppConfig => {
     clientSecret: requireEnv("DISCORD_CLIENT_SECRET"),
     sessionSecret: requireEnv("SESSION_SECRET"),
     guildId: requireEnv("GUILD_ID"),
-    mainChannelId: requireEnv("MAIN_CHANNEL_ID"),
-    reportChannelId: requireEnv("REPORT_CHANNEL_ID"),
     pollsDir: resolve(process.env.POLLS_DIR ?? "polls"),
     dataDir: resolve(process.env.DATA_DIR ?? "data"),
     httpPort: Number(process.env.HTTP_PORT ?? 3000),

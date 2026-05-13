@@ -50,6 +50,10 @@ export interface Poll {
   readonly id: PollId;
   readonly title: string;
   readonly description: string;
+  /** Канал, в котором висит главное сообщение этого опроса. */
+  readonly channelId: string;
+  /** Канал, куда улетает отчёт после завершения опроса. */
+  readonly reportChannelId: string;
   readonly questions: readonly Question[];
 }
 
@@ -95,12 +99,21 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const isNonEmptyString = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0;
 
+const isSnowflake = (v: unknown): v is string =>
+  typeof v === "string" && /^\d{17,20}$/.test(v);
+
 export function parsePoll(raw: unknown): Result<Poll, string> {
   if (!isObject(raw)) return err("poll must be an object");
   if (!isNonEmptyString(raw.id)) return err("poll.id must be a non-empty string");
   if (!isNonEmptyString(raw.title)) return err(`poll(${raw.id}).title required`);
   if (typeof raw.description !== "string")
     return err(`poll(${raw.id}).description must be a string`);
+  if (!isSnowflake(raw.channelId))
+    return err(`poll(${raw.id}).channelId must be a Discord channel id`);
+  if (!isSnowflake(raw.reportChannelId))
+    return err(
+      `poll(${raw.id}).reportChannelId must be a Discord channel id`,
+    );
   if (!Array.isArray(raw.questions) || raw.questions.length === 0)
     return err(`poll(${raw.id}).questions must be a non-empty array`);
 
@@ -119,6 +132,8 @@ export function parsePoll(raw: unknown): Result<Poll, string> {
     id: raw.id,
     title: raw.title,
     description: raw.description,
+    channelId: raw.channelId,
+    reportChannelId: raw.reportChannelId,
     questions,
   });
 }

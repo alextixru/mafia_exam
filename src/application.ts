@@ -43,14 +43,16 @@ export interface ReportSink {
   send(report: SurveyReport): Promise<void>;
 }
 
-export interface MainMessageRef {
-  readonly channelId: string;
-  readonly messageId: string;
-}
+/**
+ * id главных сообщений в каждом канале. Ключ — channelId,
+ * значение — messageId главного embed-сообщения в этом канале.
+ */
+export type MainMessageMap = Readonly<Record<string, string>>;
 
 export interface MainMessageStore {
-  get(): Promise<MainMessageRef | null>;
-  set(ref: MainMessageRef): Promise<void>;
+  get(): Promise<MainMessageMap>;
+  set(channelId: string, messageId: string): Promise<void>;
+  remove(channelId: string): Promise<void>;
 }
 
 /**

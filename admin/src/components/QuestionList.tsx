@@ -1,25 +1,33 @@
+import { useState } from "react";
 import type { Poll, Question, QuestionId } from "@shared/poll-schema.ts";
+import type { DiscordChannel } from "../api.ts";
 import { KIND_LABEL } from "../poll-ui.ts";
 import { classNames } from "../utils.ts";
 
 interface Props {
   poll: Poll;
+  channels: DiscordChannel[];
   selectedId: QuestionId | null;
   onSelect: (id: QuestionId) => void;
   onAdd: () => void;
   onDelete: (id: QuestionId) => void;
   onMove: (id: QuestionId, dir: -1 | 1) => void;
   onTitleChange: (title: string) => void;
+  onChannelIdChange: (id: string) => void;
+  onReportChannelIdChange: (id: string) => void;
 }
 
 export function QuestionList({
   poll,
+  channels,
   selectedId,
   onSelect,
   onAdd,
   onDelete,
   onMove,
   onTitleChange,
+  onChannelIdChange,
+  onReportChannelIdChange,
 }: Props) {
   return (
     <section className="flex flex-col bg-dc-surface-2 min-w-0">
@@ -36,6 +44,13 @@ export function QuestionList({
             <div className="text-xs font-mono text-dc-mute2 mt-1">{poll.id}</div>
           )}
         </div>
+
+        <SettingsSection
+          poll={poll}
+          channels={channels}
+          onChannelIdChange={onChannelIdChange}
+          onReportChannelIdChange={onReportChannelIdChange}
+        />
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -207,5 +222,101 @@ function Label({ children }: { children: React.ReactNode }) {
     <div className="text-[11px] uppercase tracking-wider text-dc-mute2 font-bold mb-1">
       {children}
     </div>
+  );
+}
+
+function SettingsSection({
+  poll,
+  channels,
+  onChannelIdChange,
+  onReportChannelIdChange,
+}: {
+  poll: Poll;
+  channels: DiscordChannel[];
+  onChannelIdChange: (id: string) => void;
+  onReportChannelIdChange: (id: string) => void;
+}) {
+  // По умолчанию схлопнуто, разворачиваем автоматически для нового опроса
+  // (когда нужно обязательно выбрать каналы).
+  const [open, setOpen] = useState(
+    poll.channelId === "" || poll.reportChannelId === "",
+  );
+
+  const incomplete = poll.channelId === "" || poll.reportChannelId === "";
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-dc-muted hover:text-dc-text font-bold transition"
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>Настройки</span>
+        {incomplete && !open && (
+          <span className="text-dc-red normal-case font-normal">
+            · нужно выбрать каналы
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-3">
+          <ChannelSelect
+            label="Канал публикации"
+            channels={channels}
+            value={poll.channelId}
+            onChange={onChannelIdChange}
+          />
+          <ChannelSelect
+            label="Канал отчёта"
+            channels={channels}
+            value={poll.reportChannelId}
+            onChange={onReportChannelIdChange}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChannelSelect({
+  label,
+  channels,
+  value,
+  onChange,
+}: {
+  label: string;
+  channels: DiscordChannel[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  // Если выбранного канала нет в списке (был удалён или нет прав) —
+  // показываем плейсхолдер «канал недоступен (id)», чтобы это было видно.
+  const knownIds = new Set(channels.map((c) => c.id));
+  const orphan = value !== "" && !knownIds.has(value);
+
+  return (
+    <label className="block">
+      <Label>{label}</Label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-dc-bg border border-dc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-dc-blurple transition"
+      >
+        <option value="" disabled>
+          — выберите канал —
+        </option>
+        {orphan && (
+          <option value={value}>(недоступен) {value}</option>
+        )}
+        {channels.map((c) => (
+          <option key={c.id} value={c.id}>
+            #{c.name}
+            {c.parentName ? ` · ${c.parentName}` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

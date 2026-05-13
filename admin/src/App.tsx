@@ -8,10 +8,12 @@ import {
 } from "@shared/poll-schema.ts";
 import {
   deletePoll as apiDelete,
+  fetchChannels,
   fetchPolls,
   logout,
   savePoll as apiSave,
   type CurrentUser,
+  type DiscordChannel,
 } from "./api.ts";
 import { PollList } from "./components/PollList.tsx";
 import { QuestionEditor } from "./components/QuestionEditor.tsx";
@@ -33,6 +35,7 @@ interface AppProps {
 
 export default function App({ user }: AppProps) {
   const [polls, setPolls] = useState<Poll[]>([]);
+  const [channels, setChannels] = useState<DiscordChannel[]>([]);
   const [loadState, setLoadState] = useState<LoadState>({ kind: "loading" });
 
   const [selectedPollId, setSelectedPollId] = useState<PollId | null>(null);
@@ -47,8 +50,9 @@ export default function App({ user }: AppProps) {
   const load = useCallback(async () => {
     setLoadState({ kind: "loading" });
     try {
-      const list = await fetchPolls();
+      const [list, chs] = await Promise.all([fetchPolls(), fetchChannels()]);
       setPolls(list);
+      setChannels(chs);
       setSelectedPollId((cur) => cur ?? list[0]?.id ?? null);
       setLoadState({ kind: "ready" });
     } catch (e) {
@@ -129,6 +133,8 @@ export default function App({ user }: AppProps) {
       id: NEW_POLL_ID,
       title: "Новый опрос",
       description: "",
+      channelId: "",
+      reportChannelId: "",
       questions: [],
     };
     setPolls((ps) => [...ps.filter((p) => p.id !== NEW_POLL_ID), fresh]);
@@ -260,12 +266,17 @@ export default function App({ user }: AppProps) {
             <>
               <QuestionList
                 poll={draft}
+                channels={channels}
                 selectedId={selectedQuestionId}
                 onSelect={setSelectedQuestionId}
                 onAdd={addQuestion}
                 onDelete={deleteQuestion}
                 onMove={moveQuestion}
                 onTitleChange={(title) => updateDraft({ title })}
+                onChannelIdChange={(channelId) => updateDraft({ channelId })}
+                onReportChannelIdChange={(reportChannelId) =>
+                  updateDraft({ reportChannelId })
+                }
               />
               <QuestionEditor
                 question={selectedQuestion}
