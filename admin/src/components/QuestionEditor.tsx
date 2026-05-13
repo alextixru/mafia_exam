@@ -5,7 +5,7 @@ import type {
   QuestionKind,
   SingleQuestion,
 } from "@shared/poll-schema.ts";
-import { KIND_LABEL, newQuestion } from "../poll-ui.ts";
+import { KIND_LABEL, newOption, newQuestion } from "../poll-ui.ts";
 import { classNames } from "../utils.ts";
 
 interface Props {
@@ -36,14 +36,6 @@ export function QuestionEditor({ question, index, onChange }: Props) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-        <Field label="Идентификатор">
-          <input
-            value={question.id}
-            onChange={(e) => onChange({ ...question, id: e.target.value })}
-            className="w-full bg-dc-bg border border-dc-border rounded px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-dc-blurple transition"
-          />
-        </Field>
-
         <Field label="Текст вопроса">
           <textarea
             value={question.text}
@@ -114,24 +106,17 @@ function OptionsEditor({
   };
   const addOption = () => {
     const idx = question.options.length + 1;
-    const options = [
-      ...question.options,
-      { value: `opt${idx}`, label: `Вариант ${idx}` },
-    ];
-    onChange({ ...question, options });
+    onChange({
+      ...question,
+      options: [...question.options, newOption(`Вариант ${idx}`)],
+    });
   };
 
   return (
     <Field label="Варианты ответа">
       <div className="space-y-2">
         {question.options.map((o, i) => (
-          <div key={i} className="flex gap-1.5 items-center">
-            <input
-              value={o.value}
-              onChange={(e) => updateOption(i, { value: e.target.value })}
-              placeholder="value"
-              className="w-20 bg-dc-bg border border-dc-border rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-dc-blurple transition"
-            />
+          <div key={o.value} className="flex gap-1.5 items-center">
             <input
               value={o.label}
               onChange={(e) => updateOption(i, { label: e.target.value })}

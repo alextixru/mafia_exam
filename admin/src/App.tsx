@@ -18,7 +18,9 @@ import { QuestionEditor } from "./components/QuestionEditor.tsx";
 import { QuestionList } from "./components/QuestionList.tsx";
 import { Topbar } from "./components/Topbar.tsx";
 import { newQuestion } from "./poll-ui.ts";
-import { genId } from "./utils.ts";
+import { genId, slugifyUnique } from "./utils.ts";
+
+const NEW_POLL_ID = "__new__";
 
 type LoadState =
   | { kind: "loading" }
@@ -123,26 +125,25 @@ export default function App({ user }: AppProps) {
   };
 
   const createPoll = () => {
-    const id = `poll_${genId("")}`;
     const fresh: Poll = {
-      id,
+      id: NEW_POLL_ID,
       title: "Новый опрос",
       description: "",
       questions: [],
     };
-    setPolls((ps) => [...ps, fresh]);
-    setSelectedPollId(id);
+    setPolls((ps) => [...ps.filter((p) => p.id !== NEW_POLL_ID), fresh]);
+    setSelectedPollId(NEW_POLL_ID);
   };
 
   const deletePoll = async (id: PollId) => {
-    try {
-      // если опрос ещё не сохранён на сервер (новый, локальный) — просто
-      // выкидываем из стейта, бэк ничего не знает.
-      const existedOnServer = polls.some((p) => p.id === id);
-      if (existedOnServer) await apiDelete(id);
-    } catch (e) {
-      setSaveError((e as Error).message);
-      return;
+    // Новый, ещё не сохранённый опрос — бэк про него не знает.
+    if (id !== NEW_POLL_ID) {
+      try {
+        await apiDelete(id);
+      } catch (e) {
+        setSaveError((e as Error).message);
+        return;
+      }
     }
     setPolls((ps) => ps.filter((p) => p.id !== id));
     if (selectedPollId === id) {
@@ -154,9 +155,22 @@ export default function App({ user }: AppProps) {
   const save = async () => {
     if (!draft) return;
     setSaveError(null);
+
+    // Для новых опросов генерим стабильный slug из title.
+    const finalDraft: Poll =
+      draft.id === NEW_POLL_ID
+        ? {
+            ...draft,
+            id: slugifyUnique(
+              draft.title,
+              polls.map((p) => p.id).filter((id) => id !== NEW_POLL_ID),
+            ),
+          }
+        : draft;
+
     // pre-flight: гоняем тот же parsePoll, что и сервер, чтобы поймать
     // ошибки локально без round-trip.
-    const valid = parsePoll(draft);
+    const valid = parsePoll(finalDraft);
     if (!valid.ok) {
       setSaveError(valid.error);
       return;
@@ -165,13 +179,17 @@ export default function App({ user }: AppProps) {
     try {
       const saved = await apiSave(valid.value);
       setPolls((ps) => {
-        const idx = ps.findIndex((p) => p.id === saved.id);
+        // Замещаем либо запись с прежним id, либо маркер "__new__".
+        const idx = ps.findIndex(
+          (p) => p.id === saved.id || p.id === NEW_POLL_ID,
+        );
         if (idx === -1) return [...ps, saved];
         const next = [...ps];
         next[idx] = saved;
         return next;
       });
       setDraft(structuredClone(saved));
+      setSelectedPollId(saved.id);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (e) {

@@ -27,10 +27,6 @@ export function QuestionList({
     <section className="flex flex-col bg-dc-surface-2 min-w-0">
       <div className="px-5 py-4 border-b border-dc-border space-y-3 shrink-0">
         <div>
-          <Label>id</Label>
-          <div className="text-sm font-mono text-dc-muted">{poll.id}</div>
-        </div>
-        <div>
           <Label>Название</Label>
           <input
             value={poll.title}
@@ -38,6 +34,9 @@ export function QuestionList({
             placeholder="Название опроса"
             className="w-full bg-dc-bg border border-dc-border rounded px-3 py-2 text-base font-medium focus:outline-none focus:border-dc-blurple transition"
           />
+          {!poll.id.startsWith("__") && (
+            <div className="text-xs font-mono text-dc-mute2 mt-1">{poll.id}</div>
+          )}
         </div>
         <div>
           <Label>Описание</Label>
