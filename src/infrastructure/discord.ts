@@ -362,8 +362,10 @@ function renderReport(report: SurveyReport): V2Payload {
   const body: APIMessageTopLevelComponent[] = [
     text(rolesPing),
     text(`## Опрос: ${truncate(poll.title, 200)}`),
-    // <@id> рендерится как кликабельный бейдж с никнеймом юзера;
-    // фактический пинг отключаем через allowed_mentions в DiscordReportSink.
+    // <@id> — кликабельный бейдж с никнеймом и аватаром. Юзер тоже получит
+    // пинг, потому что обычно состоит в одной из REPORT_PING_ROLES.
+    // allowed_mentions.users:[] здесь бесполезно — Discord пингает по роли,
+    // не по user-mention. Это норм поведение для нашего сценария.
     text(`Респондент: <@${session.userId}>`),
   ];
 
@@ -479,12 +481,13 @@ export class DiscordReportSink implements ReportSink {
       );
     await channel.send({
       ...renderReport(report),
-      // Пингуем только указанные роли. Юзер-«респондент» отображается
-      // кликабельным бейджем с ником, но без уведомления.
+      // parse:[] выключает «дикий» пинг everyone/@here.
+      // roles — whitelist для пинга проверяющих ролей.
+      // users:[] не пишем: всё равно бесполезно, если юзер в одной из ролей
+      // он получит пинг по членству в роли (Discord так устроен).
       allowedMentions: {
         parse: [],
         roles: [...REPORT_PING_ROLES],
-        users: [],
       },
     });
   }
