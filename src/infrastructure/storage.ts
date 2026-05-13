@@ -52,10 +52,16 @@ export class JsonPollRepository implements PollRepository {
       const path = join(dir, entry.name);
       const raw = JSON.parse(await readFile(path, "utf8"));
       const result = parsePoll(raw);
-      if (!result.ok)
-        throw new Error(`failed to parse ${path}: ${result.error}`);
-      if (repo.byId.has(result.value.id))
-        throw new Error(`duplicate poll id "${result.value.id}" in ${path}`);
+      if (!result.ok) {
+        console.warn(`skipping ${path}: ${result.error}`);
+        continue;
+      }
+      if (repo.byId.has(result.value.id)) {
+        console.warn(
+          `skipping ${path}: duplicate poll id "${result.value.id}" (already loaded earlier)`,
+        );
+        continue;
+      }
       repo.byId.set(result.value.id, result.value);
       repo.insertionOrder.push(result.value.id);
     }
