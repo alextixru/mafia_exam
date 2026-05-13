@@ -177,8 +177,7 @@ function buildSelectRow(
         : polls.slice(0, 25).map((p) =>
             new StringSelectMenuOptionBuilder()
               .setValue(p.id)
-              .setLabel(truncate(p.title, 100))
-              .setDescription(`Вопросов: ${p.questions.length}`),
+              .setLabel(truncate(p.title, 100)),
           )),
     );
   return new ActionRowBuilder<StringSelectMenuBuilder>()
