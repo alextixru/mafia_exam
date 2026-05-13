@@ -89,6 +89,16 @@ const Id = {
 
 const MODAL_INPUT = "answer";
 
+/**
+ * Роли, которые получают пинг при каждом отчёте о пройденном опросе.
+ * Захардкожено по запросу — модераторы / админы, ответственные за
+ * проверку экзаменов.
+ */
+const REPORT_PING_ROLES: readonly string[] = [
+  "1373678055029215232",
+  "1373678045356888084",
+];
+
 interface Parsed {
   readonly scope: string;
   readonly action: string;
@@ -347,9 +357,13 @@ function renderAnswerModal(pollId: PollId, question: FreeQuestion): ModalBuilder
 
 function renderReport(report: SurveyReport): V2Payload {
   const { poll, session } = report;
+  const rolesPing = REPORT_PING_ROLES.map((r) => `<@&${r}>`).join(" ");
 
   const body: APIMessageTopLevelComponent[] = [
+    text(rolesPing),
     text(`## Опрос: ${truncate(poll.title, 200)}`),
+    // <@id> рендерится как кликабельный бейдж с никнеймом юзера;
+    // фактический пинг отключаем через allowed_mentions в DiscordReportSink.
     text(`Респондент: <@${session.userId}>`),
   ];
 
@@ -401,7 +415,16 @@ export class DiscordReportSink implements ReportSink {
       throw new Error(
         `report channel ${this.channelId} is not a sendable text channel`,
       );
-    await channel.send(renderReport(report));
+    await channel.send({
+      ...renderReport(report),
+      // Пингуем только указанные роли. Юзер-«респондент» отображается
+      // кликабельным бейджем с ником, но без уведомления.
+      allowedMentions: {
+        parse: [],
+        roles: [...REPORT_PING_ROLES],
+        users: [],
+      },
+    });
   }
 }
 
