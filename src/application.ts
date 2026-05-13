@@ -3,9 +3,7 @@ import {
   complete,
   err,
   getQuestionByIndex,
-  isCompleteForPoll,
   isLastQuestion,
-  moveBack,
   moveForward,
   ok,
   parsePoll,
@@ -89,6 +87,19 @@ export interface QuestionView {
   readonly session: Session;
 }
 
+/**
+ * После submitAnswer возможны два исхода: ещё один вопрос или конец опроса.
+ * Курсор в submitAnswer теперь автоматически двигается — навигации «назад»
+ * у пользователя нет.
+ */
+export interface FinishedView {
+  readonly kind: "finished";
+  readonly poll: Poll;
+  readonly session: Session;
+}
+
+export type SubmitResult = QuestionView | FinishedView;
+
 const buildQuestionView = (poll: Poll, session: Session): QuestionView => {
   const question = getQuestionByIndex(poll, session.cursor);
   if (!question)
@@ -124,18 +135,6 @@ export type SubmitAnswerError =
   | { readonly kind: "question-mismatch" }
   | { readonly kind: "validation"; readonly message: string };
 
-export type FinishError =
-  | { readonly kind: "poll-not-found" }
-  | { readonly kind: "session-not-found" }
-  | { readonly kind: "incomplete"; readonly missingCount: number };
-
-export type NavError =
-  | "poll-not-found"
-  | "session-not-found"
-  | "current-not-answered"
-  | "already-first"
-  | "already-last";
-
 export type SavePollError =
   | { readonly kind: "validation"; readonly message: string };
 
@@ -150,29 +149,19 @@ export interface UseCases {
     input: { userId: UserId; pollId: PollId },
   ): Promise<Result<QuestionView, "poll-not-found">>;
 
+  /**
+   * Принимает ответ. Если был последний вопрос — авто-завершает опрос
+   * (отправляет отчёт, удаляет сессию) и возвращает `finished`.
+   * Иначе — двигает курсор и возвращает следующий вопрос.
+   *
+   * Назад вернуться нельзя, переписать ответ нельзя — это экзамен.
+   */
   submitAnswer(input: {
     userId: UserId;
     pollId: PollId;
     questionId: QuestionId;
     answer: Answer;
-  }): Promise<Result<QuestionView, SubmitAnswerError>>;
-
-  goNext(input: {
-    userId: UserId;
-    pollId: PollId;
-  }): Promise<Result<QuestionView, NavError>>;
-
-  goBack(input: {
-    userId: UserId;
-    pollId: PollId;
-  }): Promise<Result<QuestionView, NavError>>;
-
-  finishSurvey(input: {
-    userId: UserId;
-    pollId: PollId;
-  }): Promise<Result<{ session: Session }, FinishError>>;
-
-  cancelSurvey(input: { userId: UserId; pollId: PollId }): Promise<void>;
+  }): Promise<Result<SubmitResult, SubmitAnswerError>>;
 }
 
 export const createUseCases = (deps: UseCaseDeps): UseCases => {
@@ -214,56 +203,20 @@ export const createUseCases = (deps: UseCaseDeps): UseCases => {
       const validated = validateAnswer(current, answer);
       if (!validated.ok)
         return err({ kind: "validation", message: validated.error });
-      const next = setAnswer(session, questionId, validated.value);
-      await sessions.save(next);
-      return ok(buildQuestionView(poll, next));
-    },
 
-    async goNext({ userId, pollId }) {
-      const poll = await polls.getById(pollId);
-      if (!poll) return err("poll-not-found");
-      const session = await sessions.findActive(userId, pollId);
-      if (!session) return err("session-not-found");
-      const current = poll.questions[session.cursor];
-      if (!current) return err("session-not-found");
-      if (session.answers[current.id] === undefined)
-        return err("current-not-answered");
-      if (isLastQuestion(poll, session.cursor)) return err("already-last");
-      const moved = moveForward(session, poll);
-      await sessions.save(moved);
-      return ok(buildQuestionView(poll, moved));
-    },
+      const withAnswer = setAnswer(session, questionId, validated.value);
 
-    async goBack({ userId, pollId }) {
-      const poll = await polls.getById(pollId);
-      if (!poll) return err("poll-not-found");
-      const session = await sessions.findActive(userId, pollId);
-      if (!session) return err("session-not-found");
-      if (session.cursor === 0) return err("already-first");
-      const moved = moveBack(session);
-      await sessions.save(moved);
-      return ok(buildQuestionView(poll, moved));
-    },
-
-    async finishSurvey({ userId, pollId }) {
-      const poll = await polls.getById(pollId);
-      if (!poll) return err({ kind: "poll-not-found" });
-      const session = await sessions.findActive(userId, pollId);
-      if (!session) return err({ kind: "session-not-found" });
-      if (!isCompleteForPoll(session, poll)) {
-        const missingCount = poll.questions.filter(
-          (q) => session.answers[q.id] === undefined,
-        ).length;
-        return err({ kind: "incomplete", missingCount });
+      if (isLastQuestion(poll, session.cursor)) {
+        // Последний вопрос — завершаем опрос: шлём отчёт, удаляем сессию.
+        const completed = complete(withAnswer);
+        await reports.send(buildReport(poll, completed));
+        await sessions.delete(userId, pollId);
+        return ok({ kind: "finished", poll, session: completed });
       }
-      const completed = complete(session);
-      await reports.send(buildReport(poll, completed));
-      await sessions.delete(userId, pollId);
-      return ok({ session: completed });
-    },
 
-    async cancelSurvey({ userId, pollId }) {
-      await sessions.delete(userId, pollId);
+      const moved = moveForward(withAnswer, poll);
+      await sessions.save(moved);
+      return ok(buildQuestionView(poll, moved));
     },
   };
 };

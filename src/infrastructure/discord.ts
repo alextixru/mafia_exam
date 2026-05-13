@@ -33,6 +33,7 @@ import type {
   MainMessageStore,
   QuestionView,
   ReportSink,
+  SubmitResult,
   UseCases,
 } from "../application.ts";
 import type {
@@ -84,10 +85,6 @@ const Id = {
   multiSelect: (p: string, q: string) => `survey:multi${SEP}${p}${SEP}${q}`,
   openModal: (p: string, q: string) => `survey:open-modal${SEP}${p}${SEP}${q}`,
   answerModal: (p: string, q: string) => `survey:answer-modal${SEP}${p}${SEP}${q}`,
-  navBack: (p: string) => `survey:nav-back${SEP}${p}`,
-  navNext: (p: string) => `survey:nav-next${SEP}${p}`,
-  navFinish: (p: string) => `survey:nav-finish${SEP}${p}`,
-  navCancel: (p: string) => `survey:nav-cancel${SEP}${p}`,
 } as const;
 
 const MODAL_INPUT = "answer";
@@ -251,18 +248,24 @@ function renderEphemeralNotice(content: string): V2Payload {
   return v2([container([text(content)])], true);
 }
 
+/**
+ * Финальное сообщение после ответа на последний вопрос опроса.
+ */
+function renderFinished(): V2Payload {
+  return renderEphemeralNotice("✓ Спасибо! Ваши ответы отправлены.");
+}
+
+function renderSubmitResult(result: SubmitResult): V2Payload {
+  return result.kind === "finished" ? renderFinished() : renderQuestion(result);
+}
+
 function renderQuestion(view: QuestionView): V2Payload {
   const body: APIMessageTopLevelComponent[] = [
     text(`### ${truncate(view.poll.title, 200)}`),
     text(`**Вопрос ${view.cursor + 1}/${view.total}**`),
     text(view.question.text),
+    separator(1),
   ];
-  const currentLine = formatCurrentAnswer(view);
-  if (currentLine) {
-    body.push(separator(1));
-    body.push(text(currentLine));
-  }
-  body.push(separator(1));
 
   for (const row of buildQuestionComponents(view)) {
     body.push(row as unknown as APIMessageTopLevelComponent);
@@ -271,130 +274,59 @@ function renderQuestion(view: QuestionView): V2Payload {
   return v2([container(body)], true);
 }
 
-function formatCurrentAnswer(view: QuestionView): string | null {
-  const a = view.currentAnswer;
-  if (!a) return null;
-  switch (a.kind) {
-    case "free":
-      return `_Ваш текущий ответ:_ ${truncate(a.text, 200)}`;
-    case "single": {
-      const opt =
-        view.question.kind === "single"
-          ? view.question.options.find((o) => o.value === a.value)
-          : undefined;
-      return `_Ваш текущий ответ:_ ${opt?.label ?? a.value}`;
-    }
-    case "multi": {
-      const options = view.question.kind === "multi" ? view.question.options : [];
-      const labels = a.values
-        .map((v) => options.find((o) => o.value === v)?.label ?? v)
-        .join(", ");
-      return `_Ваш текущий ответ:_ ${labels}`;
-    }
-  }
-}
-
 function buildQuestionComponents(
   view: QuestionView,
 ): APIActionRowComponent<APIComponentInMessageActionRow>[] {
-  const rows: APIActionRowComponent<APIComponentInMessageActionRow>[] = [];
-
-  // Для single/multi сначала идёт row с select-меню (по API один select на row).
-  if (view.question.kind === "single") {
-    const current = (view.currentAnswer as SingleAnswer | null)?.value;
-    const select = new StringSelectMenuBuilder()
-      .setCustomId(Id.singleSelect(view.poll.id, view.question.id))
-      .setPlaceholder(current ? "Изменить выбор" : "Выберите вариант")
-      .addOptions(
-        view.question.options.slice(0, 25).map((o) =>
-          new StringSelectMenuOptionBuilder()
-            .setValue(o.value)
-            .setLabel(truncate(o.label, 100))
-            .setDefault(o.value === current),
-        ),
-      );
-    rows.push(
-      new ActionRowBuilder<StringSelectMenuBuilder>()
-        .addComponents(select)
-        .toJSON(),
-    );
-  } else if (view.question.kind === "multi") {
-    const currentValues = new Set(
-      (view.currentAnswer as MultiAnswer | null)?.values ?? [],
-    );
-    const select = new StringSelectMenuBuilder()
-      .setCustomId(Id.multiSelect(view.poll.id, view.question.id))
-      .setPlaceholder(
-        currentValues.size > 0 ? "Изменить выбор" : "Выберите варианты",
-      )
-      .setMinValues(view.question.min)
-      .setMaxValues(Math.min(view.question.max, view.question.options.length))
-      .addOptions(
-        view.question.options.slice(0, 25).map((o) =>
-          new StringSelectMenuOptionBuilder()
-            .setValue(o.value)
-            .setLabel(truncate(o.label, 100))
-            .setDefault(currentValues.has(o.value)),
-        ),
-      );
-    rows.push(
-      new ActionRowBuilder<StringSelectMenuBuilder>()
-        .addComponents(select)
-        .toJSON(),
-    );
-  }
-
-  // Для free кнопка «Ответить» встраивается в навигационный row.
-  rows.push(buildNavRow(view).toJSON());
-  return rows;
-}
-
-function buildNavRow(view: QuestionView): ActionRowBuilder<ButtonBuilder> {
-  const buttons: ButtonBuilder[] = [];
-
-  buttons.push(
-    new ButtonBuilder()
-      .setCustomId(Id.navBack(view.poll.id))
-      .setLabel("Назад")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(!view.canGoBack),
-  );
-
-  buttons.push(
-    new ButtonBuilder()
-      .setCustomId(Id.navCancel(view.poll.id))
-      .setLabel("Отмена")
-      .setStyle(ButtonStyle.Secondary),
-  );
+  // Никакой навигации: единственный input — это либо select, либо кнопка
+  // «Ответить» (для free). После взаимодействия submitAnswer сам двигает
+  // вопрос вперёд или завершает опрос. Назад вернуться нельзя.
 
   if (view.question.kind === "free") {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(Id.openModal(view.poll.id, view.question.id))
-        .setLabel(view.currentAnswer ? "Изменить ответ" : "Ответить")
-        .setStyle(ButtonStyle.Primary),
-    );
+    const btn = new ButtonBuilder()
+      .setCustomId(Id.openModal(view.poll.id, view.question.id))
+      .setLabel("Ответить")
+      .setStyle(ButtonStyle.Primary);
+    return [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(btn).toJSON(),
+    ];
   }
 
-  if (view.isLast) {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(Id.navFinish(view.poll.id))
-        .setLabel("Завершить")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(view.currentAnswer === null),
-    );
-  } else {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(Id.navNext(view.poll.id))
-        .setLabel("Далее")
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(view.currentAnswer === null),
-    );
+  if (view.question.kind === "single") {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(Id.singleSelect(view.poll.id, view.question.id))
+      .setPlaceholder("Выберите вариант")
+      .addOptions(
+        view.question.options.slice(0, 25).map((o) =>
+          new StringSelectMenuOptionBuilder()
+            .setValue(o.value)
+            .setLabel(truncate(o.label, 100)),
+        ),
+      );
+    return [
+      new ActionRowBuilder<StringSelectMenuBuilder>()
+        .addComponents(select)
+        .toJSON(),
+    ];
   }
 
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+  // multi
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(Id.multiSelect(view.poll.id, view.question.id))
+    .setPlaceholder("Выберите варианты")
+    .setMinValues(view.question.min)
+    .setMaxValues(Math.min(view.question.max, view.question.options.length))
+    .addOptions(
+      view.question.options.slice(0, 25).map((o) =>
+        new StringSelectMenuOptionBuilder()
+          .setValue(o.value)
+          .setLabel(truncate(o.label, 100)),
+      ),
+    );
+  return [
+    new ActionRowBuilder<StringSelectMenuBuilder>()
+      .addComponents(select)
+      .toJSON(),
+  ];
 }
 
 function renderAnswerModal(pollId: PollId, question: FreeQuestion): ModalBuilder {
@@ -624,7 +556,7 @@ async function routeSelect(
       await i.reply(renderEphemeralNotice(submitErrorMessage(r.error)));
       return;
     }
-    await i.update(renderQuestion(r.value));
+    await i.update(renderSubmitResult(r.value));
   }
 }
 
@@ -637,64 +569,20 @@ async function routeButton(
   const [pollId, questionId] = parsed.args;
   if (!pollId) return;
 
-  switch (parsed.action) {
-    case "open-modal": {
-      if (!questionId) return;
-      const polls = await uc.listPolls();
-      const poll = polls.find((p) => p.id === pollId);
-      const question = poll?.questions.find(
-        (q): q is FreeQuestion => q.id === questionId && q.kind === "free",
-      );
-      if (!question) {
-        await i.reply(
-          renderEphemeralNotice(
-            "⚠ Этот вопрос не поддерживает свободный ответ.",
-          ),
-        );
-        return;
-      }
-      await i.showModal(renderAnswerModal(pollId, question));
-      return;
-    }
-    case "nav-back": {
-      const r = await uc.goBack({ userId: i.user.id, pollId });
-      if (!r.ok) {
-        await i.reply(renderEphemeralNotice(navErrorMessage(r.error)));
-        return;
-      }
-      await i.update(renderQuestion(r.value));
-      return;
-    }
-    case "nav-next": {
-      const r = await uc.goNext({ userId: i.user.id, pollId });
-      if (!r.ok) {
-        await i.reply(renderEphemeralNotice(navErrorMessage(r.error)));
-        return;
-      }
-      await i.update(renderQuestion(r.value));
-      return;
-    }
-    case "nav-finish": {
-      const r = await uc.finishSurvey({ userId: i.user.id, pollId });
-      if (!r.ok) {
-        await i.update(
-          renderEphemeralNotice(
-            r.error.kind === "incomplete"
-              ? `⚠ Остались без ответа вопросов: ${r.error.missingCount}.`
-              : "⚠ Не удалось завершить опрос.",
-          ),
-        );
-        return;
-      }
-      await i.update(renderEphemeralNotice("✓ Спасибо! Ваши ответы отправлены."));
-      return;
-    }
-    case "nav-cancel": {
-      await uc.cancelSurvey({ userId: i.user.id, pollId });
-      await i.update(renderEphemeralNotice("Опрос отменён. Прогресс удалён."));
-      return;
-    }
+  if (parsed.action !== "open-modal" || !questionId) return;
+
+  const polls = await uc.listPolls();
+  const poll = polls.find((p) => p.id === pollId);
+  const question = poll?.questions.find(
+    (q): q is FreeQuestion => q.id === questionId && q.kind === "free",
+  );
+  if (!question) {
+    await i.reply(
+      renderEphemeralNotice("⚠ Этот вопрос не поддерживает свободный ответ."),
+    );
+    return;
   }
+  await i.showModal(renderAnswerModal(pollId, question));
 }
 
 async function routeModal(
@@ -718,8 +606,9 @@ async function routeModal(
     await i.reply(renderEphemeralNotice(submitErrorMessage(r.error)));
     return;
   }
-  if (i.isFromMessage()) await i.update(renderQuestion(r.value));
-  else await i.reply(renderQuestion(r.value));
+  const payload = renderSubmitResult(r.value);
+  if (i.isFromMessage()) await i.update(payload);
+  else await i.reply(payload);
 }
 
 const submitErrorMessage = (e: {
@@ -733,15 +622,6 @@ const submitErrorMessage = (e: {
   if (e.kind === "question-mismatch")
     return "⚠ Этот вопрос больше неактивен. Откройте опрос из главного меню заново.";
   return "⚠ Не удалось сохранить ответ.";
-};
-
-const navErrorMessage = (e: string): string => {
-  if (e === "session-not-found")
-    return "⚠ Сессия не найдена. Откройте опрос из главного меню заново.";
-  if (e === "current-not-answered") return "⚠ Сначала ответьте на текущий вопрос.";
-  if (e === "already-first") return "⚠ Это первый вопрос.";
-  if (e === "already-last") return "⚠ Это последний вопрос.";
-  return "⚠ Не удалось перейти.";
 };
 
 async function safeReplyError(interaction: Interaction): Promise<void> {
