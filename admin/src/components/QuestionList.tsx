@@ -312,7 +312,7 @@ function ChannelSelect({
         )}
         {channels.map((c) => (
           <option key={c.id} value={c.id}>
-            #{c.name}
+            {c.kind === "thread" ? `↳ #${c.name}` : `#${c.name}`}
             {c.parentName ? ` · ${c.parentName}` : ""}
           </option>
         ))}

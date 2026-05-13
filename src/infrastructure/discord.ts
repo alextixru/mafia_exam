@@ -403,16 +403,21 @@ function formatAnswer(question: Question, answer: Answer | null): string {
 //  ReportSink
 // ============================================================================
 
+export type ChannelOptionKind = "channel" | "thread";
+
 export interface ChannelOption {
   readonly id: string;
   readonly name: string;
+  readonly kind: ChannelOptionKind;
+  /** Имя канала-родителя (для треда — текстовый канал; для канала — категория). */
   readonly parentName: string | null;
-  readonly position: number;
 }
 
 /**
- * Текстовые каналы гильдии, отсортированные так же, как в Discord-клиенте.
- * Используется фронтом для дропдаунов «канал публикации» / «канал отчёта».
+ * Текстовые каналы и активные треды гильдии, упорядоченные так:
+ * для каждого канала — сам канал, затем сразу его активные треды.
+ * Архивные треды исключаем (бот хоть и может писать, но юзер их в
+ * UI не видит, а архив автоматически разворачивается клиентом).
  */
 export async function listGuildChannels(
   client: Client<true>,
@@ -421,24 +426,44 @@ export async function listGuildChannels(
   const guild = await client.guilds.fetch(guildId);
   const channels = await guild.channels.fetch();
 
+  const textChannels = [...channels.values()]
+    .filter(
+      (ch): ch is NonNullable<typeof ch> =>
+        !!ch &&
+        (ch.type === ChannelType.GuildText ||
+          ch.type === ChannelType.GuildAnnouncement),
+    )
+    .sort((a, b) => a.position - b.position);
+
+  // Активные треды гильдии: одним запросом, без архивных.
+  const activeThreads = await guild.channels.fetchActiveThreads();
+  const threadsByParent = new Map<string, typeof textChannels>();
+  for (const thread of activeThreads.threads.values()) {
+    if (!thread.parentId) continue;
+    const arr = threadsByParent.get(thread.parentId) ?? [];
+    arr.push(thread as never);
+    threadsByParent.set(thread.parentId, arr);
+  }
+
   const out: ChannelOption[] = [];
-  for (const ch of channels.values()) {
-    if (!ch) continue;
-    // только обычные text-каналы
-    if (
-      ch.type !== ChannelType.GuildText &&
-      ch.type !== ChannelType.GuildAnnouncement
-    ) {
-      continue;
-    }
+  for (const ch of textChannels) {
     out.push({
       id: ch.id,
       name: ch.name,
+      kind: "channel",
       parentName: ch.parent?.name ?? null,
-      position: ch.position,
     });
+    const threads = threadsByParent.get(ch.id);
+    if (!threads) continue;
+    for (const t of threads) {
+      out.push({
+        id: t.id,
+        name: t.name,
+        kind: "thread",
+        parentName: ch.name,
+      });
+    }
   }
-  out.sort((a, b) => a.position - b.position);
   return out;
 }
 

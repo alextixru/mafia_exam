@@ -64,8 +64,8 @@ export const loginUrl = "/api/auth/login";
 export interface DiscordChannel {
   id: string;
   name: string;
+  kind: "channel" | "thread";
   parentName: string | null;
-  position: number;
 }
 
 export async function fetchChannels(): Promise<DiscordChannel[]> {
