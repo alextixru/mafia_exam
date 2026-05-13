@@ -266,9 +266,6 @@ export default function App({ user }: AppProps) {
                 onDelete={deleteQuestion}
                 onMove={moveQuestion}
                 onTitleChange={(title) => updateDraft({ title })}
-                onDescriptionChange={(description) =>
-                  updateDraft({ description })
-                }
               />
               <QuestionEditor
                 question={selectedQuestion}

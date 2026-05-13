@@ -178,11 +178,7 @@ function buildSelectRow(
             new StringSelectMenuOptionBuilder()
               .setValue(p.id)
               .setLabel(truncate(p.title, 100))
-              .setDescription(
-                p.description.length > 0
-                  ? truncate(p.description, 100)
-                  : `Вопросов: ${p.questions.length}`,
-              ),
+              .setDescription(`Вопросов: ${p.questions.length}`),
           )),
     );
   return new ActionRowBuilder<StringSelectMenuBuilder>()

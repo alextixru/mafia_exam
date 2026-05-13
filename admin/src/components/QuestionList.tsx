@@ -10,7 +10,6 @@ interface Props {
   onDelete: (id: QuestionId) => void;
   onMove: (id: QuestionId, dir: -1 | 1) => void;
   onTitleChange: (title: string) => void;
-  onDescriptionChange: (description: string) => void;
 }
 
 export function QuestionList({
@@ -21,7 +20,6 @@ export function QuestionList({
   onDelete,
   onMove,
   onTitleChange,
-  onDescriptionChange,
 }: Props) {
   return (
     <section className="flex flex-col bg-dc-surface-2 min-w-0">
@@ -37,16 +35,6 @@ export function QuestionList({
           {!poll.id.startsWith("__") && (
             <div className="text-xs font-mono text-dc-mute2 mt-1">{poll.id}</div>
           )}
-        </div>
-        <div>
-          <Label>Описание</Label>
-          <textarea
-            value={poll.description}
-            onChange={(e) => onDescriptionChange(e.target.value)}
-            placeholder="Короткое описание (необязательно)"
-            rows={2}
-            className="w-full bg-dc-bg border border-dc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-dc-blurple transition resize-y"
-          />
         </div>
       </div>
 
