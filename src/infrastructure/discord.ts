@@ -355,29 +355,69 @@ function renderAnswerModal(pollId: PollId, question: FreeQuestion): ModalBuilder
     );
 }
 
-function renderReport(report: SurveyReport): V2Payload {
+/**
+ * Discord V2 limits: 10 top-level components, 10 per container, 40 total.
+ * Strategy: multiple containers per message, ~30 items per message max.
+ */
+const CONTAINER_CAPACITY = 10;
+const MSG_MAX_ITEMS = 30;
+
+function renderReport(report: SurveyReport): V2Payload[] {
   const { poll, session } = report;
   const rolesPing = REPORT_PING_ROLES.map((r) => `<@&${r}>`).join(" ");
 
-  const body: APIMessageTopLevelComponent[] = [
+  const header: APIMessageTopLevelComponent[] = [
     text(rolesPing),
     text(`## Опрос: ${truncate(poll.title, 200)}`),
-    // <@id> — кликабельный бейдж с никнеймом и аватаром. Юзер тоже получит
-    // пинг, потому что обычно состоит в одной из REPORT_PING_ROLES.
-    // allowed_mentions.users:[] здесь бесполезно — Discord пингает по роли,
-    // не по user-mention. Это норм поведение для нашего сценария.
     text(`Респондент: <@${session.userId}>`),
   ];
 
+  // Build flat list of Q&A components
+  const qaItems: APIMessageTopLevelComponent[] = [];
   for (let i = 0; i < poll.questions.length; i++) {
     const q = poll.questions[i]!;
     const a = session.answers[q.id] ?? null;
-    body.push(separator(1));
-    body.push(text(`**${i + 1}. ${truncate(q.text, 800)}**`));
-    body.push(text(truncate(formatAnswer(q, a), 1500)));
+    qaItems.push(separator(1));
+    qaItems.push(text(`**${i + 1}. ${truncate(q.text, 800)}**`));
+    qaItems.push(text(truncate(formatAnswer(q, a), 1500)));
   }
 
-  return v2([container(body)]);
+  // All items together (header counts toward first message budget)
+  const allItems = [...header, ...qaItems];
+
+  // If everything fits in one message — single container (simple case)
+  if (allItems.length <= CONTAINER_CAPACITY) {
+    return [v2([container(allItems)])];
+  }
+
+  // Split into messages, each with up to MSG_MAX_ITEMS across containers
+  const payloads: V2Payload[] = [];
+  let offset = 0;
+  let msgIndex = 0;
+
+  while (offset < allItems.length) {
+    const msgBudget =
+      msgIndex === 0 ? MSG_MAX_ITEMS : MSG_MAX_ITEMS - 1; // reserve 1 for continuation label
+    const msgSlice = allItems.slice(offset, offset + msgBudget);
+
+    // Split message slice into containers of ≤10
+    const containers: APIMessageTopLevelComponent[] = [];
+
+    if (msgIndex > 0) {
+      // Lightweight continuation marker (subtext)
+      containers.push(text(`-# продолжение`));
+    }
+
+    for (let i = 0; i < msgSlice.length; i += CONTAINER_CAPACITY) {
+      containers.push(container(msgSlice.slice(i, i + CONTAINER_CAPACITY)));
+    }
+
+    payloads.push(v2(containers));
+    offset += msgSlice.length;
+    msgIndex++;
+  }
+
+  return payloads;
 }
 
 function formatAnswer(question: Question, answer: Answer | null): string {
@@ -479,17 +519,16 @@ export class DiscordReportSink implements ReportSink {
       throw new Error(
         `report channel ${channelId} is not a sendable text channel`,
       );
-    await channel.send({
-      ...renderReport(report),
-      // parse:[] выключает «дикий» пинг everyone/@here.
-      // roles — whitelist для пинга проверяющих ролей.
-      // users:[] не пишем: всё равно бесполезно, если юзер в одной из ролей
-      // он получит пинг по членству в роли (Discord так устроен).
-      allowedMentions: {
-        parse: [],
-        roles: [...REPORT_PING_ROLES],
-      },
-    });
+
+    const payloads = renderReport(report);
+    const mentions = {
+      parse: [] as const,
+      roles: [...REPORT_PING_ROLES],
+    };
+
+    for (const payload of payloads) {
+      await channel.send({ ...payload, allowedMentions: mentions });
+    }
   }
 }
 
